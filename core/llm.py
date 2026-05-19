@@ -28,16 +28,16 @@ import os
 from dotenv import load_dotenv
 from openai import OpenAI
 
-import calendar_tools
-import db
-import drive_tools
-import gmail_tools
-import tasks_tools
-import weather_tools
-from calendar_tools import CalendarAuthError
-from drive_tools import DriveAuthError
-from gmail_tools import GmailAuthError
-from tasks_tools import TasksAuthError
+import core.db as db
+import tools.calendar_tools as calendar_tools
+import tools.drive_tools as drive_tools
+import tools.gmail_tools as gmail_tools
+import tools.tasks_tools as tasks_tools
+import tools.weather_tools as weather_tools
+from tools.calendar_tools import CalendarAuthError
+from tools.drive_tools import DriveAuthError
+from tools.gmail_tools import GmailAuthError
+from tools.tasks_tools import TasksAuthError
 
 load_dotenv()
 
@@ -93,6 +93,7 @@ You have access to the user's Google Calendar and Google Tasks.
 When they ask you to add, change, delete or check calendar events or tasks, use the appropriate tools.
 After completing a tool action, confirm in plain language what you did.
 When interpreting relative dates like "Tuesday", "next week", "tomorrow" — resolve them from today's date above.
+When the user asks for their "next" or "upcoming" event, pass today's full date AND current time as start_date (e.g. 2026-05-19T14:30:00) so that events already past today are excluded.
 
 You can also:
 - Read and search the user's Gmail, create email drafts, and send emails (only send when the user clearly asks to send rather than draft — otherwise create a draft)

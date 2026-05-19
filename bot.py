@@ -21,9 +21,9 @@ from telegram.ext import (
     filters,
 )
 
-import db
-import llm
-from stt import transcribe
+import core.db as db
+import core.llm as llm
+from core.stt import transcribe
 
 load_dotenv()
 

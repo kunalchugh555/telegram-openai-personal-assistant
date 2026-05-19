@@ -13,26 +13,34 @@ telegram-assistant/
 ├── .env.example               # Template for required environment variables
 ├── .env                       # Local secrets — never committed
 ├── requirements.txt           # Pinned Python dependencies
-├── Dockerfile                 # Container image — installs ffmpeg, deps, runs bot.py
-├── fly.toml                   # Fly.io deployment config — always-on polling, persistent volume
+├── Dockerfile                 # Container image — for reference / local dev
 ├── bot.py                     # Main entry point — Telegram handlers for voice notes, audio files, and text
-├── stt.py                     # Speech-to-text using OpenAI gpt-4o-mini-transcribe
-├── llm.py                     # GPT calls with tool calling — all tool schemas, dispatch, web search
-├── calendar_tools.py          # Google Calendar API — list, create, update, delete events
-├── tasks_tools.py             # Google Tasks API — list task lists, list, create, complete, delete tasks
-├── gmail_tools.py             # Gmail API — list unread, search, read threads, create drafts, send email
-├── drive_tools.py             # Google Drive API — search files, read file content (read-only)
-├── weather_tools.py           # Open-Meteo weather — current, 14-day forecast, 7-day past, hourly (no key)
-├── db.py                      # SQLite conversation history — get, add, trim, clear per user ID
 ├── auth_google.py             # One-time OAuth script — generates token.json for all Google scopes
-└── token.json                 # Google OAuth token — generated locally, never committed
+├── token.json                 # Google OAuth token — generated locally, never committed
+├── scripts/
+│   └── setup_vm.sh            # Runs on the GCP VM — installs deps, clones repo, registers systemd service
+├── core/
+│   ├── __init__.py            # Package marker
+│   ├── db.py                  # SQLite conversation history — get, add, trim, clear per user ID
+│   ├── llm.py                 # GPT calls with tool calling — all tool schemas, dispatch, web search
+│   └── stt.py                 # Speech-to-text using OpenAI gpt-4o-mini-transcribe
+└── tools/
+    ├── __init__.py            # Package marker
+    ├── calendar_tools.py      # Google Calendar API — list, create, update, delete events
+    ├── tasks_tools.py         # Google Tasks API — list task lists, list, create, complete, delete tasks
+    ├── gmail_tools.py         # Gmail API — list unread, search, read threads, create drafts, send email
+    ├── drive_tools.py         # Google Drive API — search files, read file content (read-only)
+    └── weather_tools.py       # Open-Meteo weather — current, 14-day forecast, 7-day past, hourly (no key)
 
 ## Key Design Decisions
 
-- Polling mode (not webhooks): simpler, no HTTPS/domain required, works on Fly.io with auto_stop disabled
+- Polling mode (not webhooks): simpler, no HTTPS/domain required, works on always-on GCP e2-micro VM
+- Deployed on Google Cloud Compute Engine e2-micro (us-central1-a) — free tier, $0/month hosting
+- systemd service on the VM keeps the bot running and restarts it automatically on reboot or crash
 - Single token.json for all Google services (Calendar, Tasks, Gmail, Drive scopes in one consent flow)
+- token.json generated locally (auth_google.py opens a browser) then copied to the VM via gcloud scp
 - SQLite for conversation history: zero infrastructure, survives restarts, good enough for personal use
-- DATA_DIR env var controls where token.json and assistant.db live (. locally, /data on Fly.io)
+- DATA_DIR env var controls where token.json and assistant.db live (. locally, ~/app dir on VM)
 - Conversation history capped at 20 messages per user to control token costs
 - System prompt injected with current datetime AND user location/timezone at each call
 - Tool results passed back to GPT before final reply — GPT generates the confirmation message

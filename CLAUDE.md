@@ -19,6 +19,10 @@ This is a personal Telegram voice assistant bot. The user sends voice messages,
 the bot transcribes them with OpenAI Whisper, queries GPT with tool calling,
 and can read/write Google Calendar and Google Tasks. Replies are plain text.
 
+## Git rules
+
+- Never include "Co-Authored-By: Claude" or any Claude attribution in commit messages
+
 ## Key rules
 
 - Never hardcode API keys or tokens anywhere. Always use environment variables via .env

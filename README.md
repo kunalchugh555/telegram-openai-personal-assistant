@@ -9,7 +9,7 @@ with tool calling, and can:
 - **Gmail** — read unread mail, search, read full threads, draft replies, and send email
 - **Google Drive** — search files and read the contents of Docs, Sheets, and PDFs
 - **Web search** — look up current news, scores, prices, business hours, and other time-sensitive facts
-- **Weather** — current conditions and a 7-day forecast for any location
+- **Weather** — current conditions, 14-day forecast, 7-day past history, and hourly detail for any location
 - **General questions** — answer anything from GPT's knowledge
 
 It remembers conversation context across messages and replies in plain text.
@@ -21,14 +21,13 @@ The bot only responds to your own Telegram user ID.
 - ffmpeg installed locally (`brew install ffmpeg` on Mac, `apt install ffmpeg` on Linux)
 - A Telegram account
 - An OpenAI account with API credits
-- A Google account with Calendar, Tasks, Gmail, and Drive
-- The following Google APIs enabled in your Google Cloud project:
+- A Google Cloud project (`personal-assistant-kunal`) with these APIs enabled:
   - Google Calendar API
   - Google Tasks API
   - Gmail API
   - Google Drive API
 
-## Setup
+## Local Setup
 
 **1. Get your Telegram bot token**
 - Open Telegram and search for @BotFather
@@ -36,37 +35,27 @@ The bot only responds to your own Telegram user ID.
 - Copy the API token you receive
 
 **2. Get your Telegram user ID**
-- Message @userinfobot on Telegram
-- It replies with your numeric user ID
+- Message @userinfobot on Telegram — it replies with your numeric user ID
 
 **3. Get your OpenAI API key**
-- Sign in at platform.openai.com
-- Go to API keys, create a new key
+- Sign in at platform.openai.com → API keys → create a new key
 
-**4. Set up Google OAuth credentials**
-- Go to console.cloud.google.com
-- Create a new project
-- Enable these four APIs in the project:
-  - Google Calendar API
-  - Google Tasks API
-  - Gmail API
-  - Google Drive API
-- Go to APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID
-- Application type: Desktop app
-- Download the credentials and copy the Client ID and Client Secret
-
-> If you already set the bot up before Gmail and Drive were added, enable the
-> two new APIs and run `python auth_google.py` again to re-authorize with the
-> expanded scopes.
+**4. Google OAuth credentials**
+- Go to console.cloud.google.com → project `personal-assistant-kunal`
+- APIs & Services → Credentials → Create Credentials → OAuth 2.0 Client ID
+- Application type: Desktop app → Create
+- Copy the Client ID and Client Secret
 
 **5. Configure the project**
 ```bash
 cp .env.example .env
-# Edit .env and fill in all values, including USER_LOCATION and USER_TIMEZONE
+# Edit .env and fill in all values
 ```
 
 **6. Install dependencies**
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
@@ -74,9 +63,9 @@ pip install -r requirements.txt
 ```bash
 python auth_google.py
 ```
-This opens a browser window. Sign in and approve access to Calendar, Tasks,
-Gmail, and Drive. A `token.json` file is saved locally. Re-run this script
-whenever the requested scopes change.
+A browser window opens. Sign in and approve access to Calendar, Tasks, Gmail,
+and Drive. A `token.json` file is saved locally. Re-run this script if you
+ever change the requested scopes.
 
 **8. Run the bot**
 ```bash
@@ -85,21 +74,79 @@ python bot.py
 
 Open Telegram, find your bot by its username, and start chatting.
 
-## Deploying to Fly.io
+## Deploying to Google Cloud (free, always-on)
+
+The bot runs on a free-tier **e2-micro** Compute Engine VM in Google Cloud.
+This VM is always on and costs $0/month under the Always Free tier.
+
+### One-time VM creation (run locally)
 
 ```bash
-# Install flyctl if you haven't: https://fly.io/docs/flyctl/install/
-fly launch
-fly secrets set TELEGRAM_BOT_TOKEN=xxx OPENAI_API_KEY=xxx GOOGLE_CLIENT_ID=xxx \
-  GOOGLE_CLIENT_SECRET=xxx ALLOWED_USER_ID=xxx USER_LOCATION="Your City, State" \
-  USER_TIMEZONE=America/Chicago
-fly volumes create assistant_data --size 1
+# Enable Compute Engine
+gcloud services enable compute.googleapis.com --project=personal-assistant-kunal
 
-# Copy your local token.json to the Fly volume
-fly ssh sftp shell
-put token.json /data/token.json
+# Create the VM
+gcloud compute instances create telegram-assistant \
+  --machine-type=e2-micro \
+  --zone=us-central1-a \
+  --image-family=debian-12 \
+  --image-project=debian-cloud \
+  --boot-disk-size=30GB \
+  --project=personal-assistant-kunal
 
-fly deploy
+# Run the setup script on the VM (installs deps, clones repo, registers systemd service)
+gcloud compute ssh telegram-assistant --zone=us-central1-a \
+  --project=personal-assistant-kunal -- 'bash -s' < scripts/setup_vm.sh
+
+# Copy your secrets to the VM
+gcloud compute scp .env telegram-assistant:~/telegram-openai-personal-assistant/.env \
+  --zone=us-central1-a --project=personal-assistant-kunal
+
+gcloud compute scp token.json telegram-assistant:~/telegram-openai-personal-assistant/token.json \
+  --zone=us-central1-a --project=personal-assistant-kunal
+
+# Start the bot
+gcloud compute ssh telegram-assistant --zone=us-central1-a \
+  --project=personal-assistant-kunal -- \
+  'sudo systemctl start telegram-assistant'
+```
+
+### Managing the bot on the VM
+
+```bash
+# SSH into the VM
+gcloud compute ssh telegram-assistant --zone=us-central1-a --project=personal-assistant-kunal
+
+# Then on the VM:
+sudo systemctl status telegram-assistant   # check if running
+sudo systemctl restart telegram-assistant  # restart
+sudo journalctl -u telegram-assistant -f   # live logs
+```
+
+### Updating the bot after a code change
+
+```bash
+gcloud compute ssh telegram-assistant --zone=us-central1-a \
+  --project=personal-assistant-kunal -- \
+  'cd ~/telegram-openai-personal-assistant && git pull && sudo systemctl restart telegram-assistant'
+```
+
+### Re-authenticating Google OAuth
+
+OAuth tokens occasionally expire. If the bot reports an auth error:
+
+```bash
+# Run locally to generate a fresh token.json
+python auth_google.py
+
+# Copy it to the VM
+gcloud compute scp token.json telegram-assistant:~/telegram-openai-personal-assistant/token.json \
+  --zone=us-central1-a --project=personal-assistant-kunal
+
+# Restart the bot
+gcloud compute ssh telegram-assistant --zone=us-central1-a \
+  --project=personal-assistant-kunal -- \
+  'sudo systemctl restart telegram-assistant'
 ```
 
 ## Usage Examples
@@ -115,39 +162,31 @@ fly deploy
 - "Add 'call the bank' to my tasks"
 - "Add 'submit report' due Friday"
 - "Mark the bank task as done"
-- "What task lists do I have?"
 
 **Gmail:**
 - "Do I have any unread emails?"
 - "Did anyone email me about the invoice?"
-- "Read me John's latest email"
 - "Draft a reply to John saying I'll have it done by Friday"
 - "Send John an email letting him know I'll be 10 minutes late"
-- "Any emails from Amazon this week?"
 
 **Google Drive:**
 - "Find my Q3 report"
-- "What did my notes from last Tuesday say?"
-- "Search Drive for the contractor proposal"
 - "Read me the contents of the meeting notes doc"
+- "Search Drive for the contractor proposal"
 
 **Web Search:**
 - "What's the score of the Cubs game?"
-- "What time does Home Depot in Dubuque close today?"
+- "What time does Home Depot close today?"
 - "What's the latest on the Fed rate decision?"
-- "Is there any news about [topic]?"
 
 **Weather:**
 - "What's the weather like today?"
 - "Should I bring an umbrella this week?"
-- "What's the forecast for the weekend?"
-- "What's the weather in Chicago tomorrow?"
-- "What was the weather yesterday?"
-- "How warm was it last Tuesday?"
+- "What was the weather last Tuesday?"
 - "What's the hourly forecast for tomorrow?"
-- "What will it be like at 6pm tonight?"
+- "Weather in Tokyo this weekend?"
 
-Weather covers current conditions, the next 14 days, and the past 7 days, plus
+Weather covers current conditions, the next 14 days, the past 7 days, and
 hour-by-hour detail for any day within the last 92 days or the next 14.
 Forecasts beyond about 7 days out are lower confidence.
 
@@ -158,10 +197,9 @@ Forecasts beyond about 7 days out are lower confidence.
 
 ## Email: drafts vs. sending
 
-The bot can both draft and send email. It drafts by default — when you say
-"draft a reply," it stages a draft in Gmail for you to review. It only sends
-when you clearly ask it to ("send John an email..."). Drafts and sent mail
-both appear in your normal Gmail.
+The bot drafts by default — when you say "draft a reply," it stages a draft in
+Gmail for you to review. It only sends when you clearly ask it to ("send John
+an email..."). Drafts and sent mail both appear in your normal Gmail.
 
 ## Commands
 
@@ -172,16 +210,16 @@ both appear in your normal Gmail.
 
 ## Cost
 
-Roughly $3–5/month total:
-- ~$1–3/month Fly.io hosting
-- ~$0.003 per voice question in API costs (transcription + GPT)
-
-| Addition | Cost |
+| Item | Cost |
 |---|---|
-| Calendar / Tasks / Gmail / Drive tools | $0 (Google APIs are free at personal scale) |
+| Google Cloud e2-micro VM (hosting) | $0 (Always Free tier) |
+| Google APIs (Calendar, Tasks, Gmail, Drive) | $0 (free at personal scale) |
 | Weather (Open-Meteo) | $0 (free, no API key) |
-| Web search | ~$0.001–0.003 per search (OpenAI web search pricing) |
-| Extra GPT tokens from tool results | Negligible at personal use volume |
+| OpenAI transcription per voice message (~30s) | ~$0.003 |
+| OpenAI GPT per message | ~$0.0003 |
+| OpenAI web search per search | ~$0.001–0.003 |
+
+Rough total: **~$1–3/month** in OpenAI API costs only. Hosting is free.
 
 ## License
 

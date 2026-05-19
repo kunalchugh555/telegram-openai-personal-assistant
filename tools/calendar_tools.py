@@ -82,9 +82,22 @@ def _humanize(value: str) -> str:
 
 
 def list_events(start_date: str, end_date: str) -> list[dict]:
-    """List events between two ISO 8601 dates (inclusive)."""
+    """List events between two ISO 8601 dates/datetimes (inclusive).
+
+    When start_date is a bare date (no time) and matches today, we use the
+    current UTC time so that events already passed today are excluded — this
+    makes 'next meeting' queries return only future events.
+    """
     service = _service()
-    time_min = start_date if "T" in start_date else f"{start_date}T00:00:00Z"
+    if "T" in start_date:
+        time_min = start_date
+    else:
+        today_iso = dt.date.today().isoformat()
+        if start_date == today_iso:
+            # Use right now so past-today events are excluded.
+            time_min = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        else:
+            time_min = f"{start_date}T00:00:00Z"
     time_max = end_date if "T" in end_date else f"{end_date}T23:59:59Z"
 
     result = service.events().list(
