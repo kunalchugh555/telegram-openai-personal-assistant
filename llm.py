@@ -403,8 +403,9 @@ TOOLS = [
         "function": {
             "name": "get_weather",
             "description": (
-                "Get current weather and forecast for a location. If no location "
-                "is given, uses the user's home location."
+                "Get current conditions, today, the next 7 days, and the past 7 "
+                "days for a location. If no location is given, uses the user's "
+                "home location."
             ),
             "parameters": {
                 "type": "object",
@@ -424,13 +425,35 @@ TOOLS = [
         "type": "function",
         "function": {
             "name": "get_forecast",
-            "description": "Get a multi-day weather forecast.",
+            "description": "Get a multi-day weather forecast (future days).",
             "parameters": {
                 "type": "object",
                 "properties": {
                     "days": {
                         "type": "integer",
                         "description": "Number of days, default 7, max 7",
+                    },
+                    "location": {"type": "string", "description": "Optional location"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_hourly_forecast",
+            "description": (
+                "Get hour-by-hour weather for a single day. Works for past days "
+                "(up to 92 days back) and future days (up to 7 ahead). Use for "
+                "questions like 'weather at 3pm' or 'what was it like this morning'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "date": {
+                        "type": "string",
+                        "description": "Optional ISO 8601 date (YYYY-MM-DD); defaults to today",
                     },
                     "location": {"type": "string", "description": "Optional location"},
                 },
@@ -558,6 +581,8 @@ def _execute_tool(name: str, args: dict):
         )
     if name == "get_forecast":
         return weather_tools.get_forecast(args.get("days", 7), args.get("location"))
+    if name == "get_hourly_forecast":
+        return weather_tools.get_hourly_forecast(args.get("date"), args.get("location"))
 
     # --- Web search ---
     if name == "web_search":

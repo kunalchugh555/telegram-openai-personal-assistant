@@ -22,7 +22,7 @@ telegram-assistant/
 ├── tasks_tools.py             # Google Tasks API — list task lists, list, create, complete, delete tasks
 ├── gmail_tools.py             # Gmail API — list unread, search, read threads, create drafts, send email
 ├── drive_tools.py             # Google Drive API — search files, read file content (read-only)
-├── weather_tools.py           # Open-Meteo weather — current conditions and multi-day forecast (no key)
+├── weather_tools.py           # Open-Meteo weather — current, 7-day forecast, 7-day past, hourly (no key)
 ├── db.py                      # SQLite conversation history — get, add, trim, clear per user ID
 ├── auth_google.py             # One-time OAuth script — generates token.json for all Google scopes
 └── token.json                 # Google OAuth token — generated locally, never committed
@@ -51,6 +51,8 @@ telegram-assistant/
 - Drive file content is always truncated to 3000 chars; Sheets to 50 rows — protects GPT context
 - PDFs are read with pypdf; if pypdf is unavailable, PDF reading degrades to a graceful error
 - Weather uses Open-Meteo (free, no API key); US units (Fahrenheit, mph); failures return error payloads
+- get_weather returns current + today + next 7 days + past 7 days; get_hourly_forecast gives hour-by-hour
+  detail for any single day within 92 days back or 7 days ahead (Open-Meteo past_days/forecast_days)
 - Web search: OpenAI's native web search is a Responses API tool, not a Chat Completions tool. It is
   exposed to GPT as an ordinary `web_search` function tool whose handler (_web_search in llm.py) calls
   the Responses API. This keeps the proven Chat Completions tool loop unchanged.

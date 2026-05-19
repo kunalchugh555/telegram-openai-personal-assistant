@@ -142,6 +142,13 @@ fly deploy
 - "Should I bring an umbrella this week?"
 - "What's the forecast for the weekend?"
 - "What's the weather in Chicago tomorrow?"
+- "What was the weather yesterday?"
+- "How warm was it last Tuesday?"
+- "What's the hourly forecast for tomorrow?"
+- "What will it be like at 6pm tonight?"
+
+Weather covers current conditions, the next 7 days, and the past 7 days, plus
+hour-by-hour detail for any day within the last 92 days or the next 7.
 
 **General:**
 - Ask it anything — it answers from GPT's knowledge
