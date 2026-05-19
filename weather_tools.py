@@ -4,11 +4,14 @@ Geocoding uses Open-Meteo's geocoding endpoint; forecasts use its forecast
 endpoint. All temperatures are Fahrenheit and wind speeds are mph (US units).
 
 Coverage:
-  - get_weather          current conditions, today, the next 7 days, and the
+  - get_weather          current conditions, today, the next 14 days, and the
                          past 7 days (daily summaries)
-  - get_forecast         a multi-day daily forecast (future), capped at 7 days
+  - get_forecast         a multi-day daily forecast (future), capped at 14 days
   - get_hourly_forecast  hour-by-hour detail for a single day — any day within
-                         the last 92 days or the next 7 days
+                         the last 92 days or the next 14 days
+
+Note: forecasts beyond ~7 days out are lower confidence — Open-Meteo serves
+them from a coarser model.
 
 On any network or API failure, these functions return an {"error": ...}
 payload (rather than raising) so the assistant relays a friendly message.
@@ -32,8 +35,8 @@ HTTP_TIMEOUT = 10  # seconds
 # Shown to the user when the weather API cannot be reached.
 WEATHER_ERROR = "I couldn't fetch the weather right now. Try again in a moment."
 
-# Open-Meteo free tier: up to 7 days of forecast and 92 days of history.
-MAX_FORECAST_DAYS = 7
+# Open-Meteo serves up to 16 forecast days and 92 days of history; we use 14.
+MAX_FORECAST_DAYS = 14
 PAST_WEEK_DAYS = 7      # past days bundled into a get_weather response
 MAX_PAST_DAYS = 92      # furthest back the forecast endpoint serves history
 
@@ -204,7 +207,7 @@ def _format_weather(data: dict, label: str) -> dict:
             "precip_chance": today.get("precip_chance"),
             "condition": today.get("condition"),
         },
-        "week": week,   # today plus the next 6 days
+        "week": week,   # today plus the next 13 days
         "past": past,   # the previous 7 days
     }
 
@@ -247,7 +250,7 @@ def get_weather(
     lat: float | None = None,
     lon: float | None = None,
 ) -> dict:
-    """Get current conditions, today, the next 7 days, and the past 7 days.
+    """Get current conditions, today, the next 14 days, and the past 7 days.
 
     Coordinates are used directly when given; otherwise the location string (or
     USER_LOCATION from the environment) is geocoded first. All units are US.

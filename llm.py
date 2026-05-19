@@ -403,8 +403,8 @@ TOOLS = [
         "function": {
             "name": "get_weather",
             "description": (
-                "Get current conditions, today, the next 7 days, and the past 7 "
-                "days for a location. If no location is given, uses the user's "
+                "Get current conditions, today, the next 14 days, and the past "
+                "7 days for a location. If no location is given, uses the user's "
                 "home location."
             ),
             "parameters": {
@@ -431,7 +431,7 @@ TOOLS = [
                 "properties": {
                     "days": {
                         "type": "integer",
-                        "description": "Number of days, default 7, max 7",
+                        "description": "Number of days, default 7, max 14",
                     },
                     "location": {"type": "string", "description": "Optional location"},
                 },
@@ -445,7 +445,7 @@ TOOLS = [
             "name": "get_hourly_forecast",
             "description": (
                 "Get hour-by-hour weather for a single day. Works for past days "
-                "(up to 92 days back) and future days (up to 7 ahead). Use for "
+                "(up to 92 days back) and future days (up to 14 ahead). Use for "
                 "questions like 'weather at 3pm' or 'what was it like this morning'."
             ),
             "parameters": {
