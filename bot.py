@@ -1,8 +1,9 @@
 """Main entry point — a private Telegram voice/text assistant bot (polling mode).
 
-Voice messages are transcribed with OpenAI, then both voice and text messages
-are answered by GPT with Calendar and Tasks tool calling. Only ALLOWED_USER_ID
-may interact with the bot; all other senders are ignored silently.
+Voice notes and uploaded audio files are transcribed with OpenAI; text messages
+are used directly. Both paths are answered by GPT with Calendar and Tasks tool
+calling. Only ALLOWED_USER_ID may interact with the bot; all other senders are
+ignored silently.
 """
 
 import logging
@@ -94,27 +95,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
             pass
 
 
-async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handle a voice message — download, convert, transcribe, then query the LLM."""
+def _extract_audio(message) -> object | None:
+    """Return the audio-bearing object from a message — a voice note, an audio
+    file, or an audio document — or None if the message carries no audio."""
+    if message.voice is not None:
+        return message.voice
+    if message.audio is not None:
+        return message.audio
+    document = message.document
+    if document is not None and (document.mime_type or "").startswith("audio/"):
+        return document
+    return None
+
+
+async def handle_audio(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle a voice note or uploaded audio file — download, convert, transcribe,
+    then query the LLM. Works for any audio format ffmpeg can decode."""
     if not _is_authorized(update):
         return
     user_id = update.effective_user.id
 
     placeholder = None
-    ogg_path = None
+    src_path = None
     mp3_path = None
     try:
         placeholder = await update.message.reply_text("...")
 
-        # Download the OGG voice file to a temp path.
-        voice_file = await context.bot.get_file(update.message.voice.file_id)
-        tmp_dir = tempfile.gettempdir()
-        ogg_path = os.path.join(tmp_dir, f"voice_{user_id}_{update.message.message_id}.ogg")
-        mp3_path = os.path.join(tmp_dir, f"voice_{user_id}_{update.message.message_id}.mp3")
-        await voice_file.download_to_drive(ogg_path)
+        media = _extract_audio(update.message)
+        if media is None:
+            await placeholder.edit_text(STT_ERROR)
+            return
 
-        # Convert OGG to MP3 for the transcription API.
-        AudioSegment.from_file(ogg_path, format="ogg").export(mp3_path, format="mp3")
+        # Download the audio to a temp path. The suffix is a hint only — pydub
+        # lets ffmpeg sniff the actual format on conversion.
+        audio_file = await context.bot.get_file(media.file_id)
+        suffix = os.path.splitext(audio_file.file_path or "")[1] or ".ogg"
+        tmp_dir = tempfile.gettempdir()
+        base = f"audio_{user_id}_{update.message.message_id}"
+        src_path = os.path.join(tmp_dir, base + suffix)
+        mp3_path = os.path.join(tmp_dir, base + ".mp3")
+        await audio_file.download_to_drive(src_path)
+
+        # Convert to MP3 for the transcription API (format auto-detected).
+        AudioSegment.from_file(src_path).export(mp3_path, format="mp3")
 
         # Transcribe.
         try:
@@ -131,7 +154,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         await placeholder.edit_text(reply)
 
     except Exception as exc:
-        logger.error("handle_voice failed for user %s: %s", user_id, exc)
+        logger.error("handle_audio failed for user %s: %s", user_id, exc)
         try:
             if placeholder is not None:
                 await placeholder.edit_text(GENERIC_ERROR)
@@ -140,7 +163,7 @@ async def handle_voice(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         except Exception:
             pass
     finally:
-        for path in (ogg_path, mp3_path):
+        for path in (src_path, mp3_path):
             if path and os.path.exists(path):
                 try:
                     os.remove(path)
@@ -164,7 +187,11 @@ def main() -> None:
 
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("clear", clear_command))
-    application.add_handler(MessageHandler(filters.VOICE, handle_voice))
+    application.add_handler(
+        MessageHandler(
+            filters.VOICE | filters.AUDIO | filters.Document.AUDIO, handle_audio
+        )
+    )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(on_error)
 
