@@ -1,11 +1,11 @@
 """One-time OAuth setup script.
 
-Run this once before starting the bot:
+Run this once (and again whenever the scopes below change):
 
     python auth_google.py
 
-It opens a browser for Google consent covering both Calendar and Tasks,
-then writes the resulting credentials to DATA_DIR/token.json.
+It opens a browser for Google consent covering Calendar, Tasks, Gmail, and
+Drive, then writes the resulting credentials to DATA_DIR/token.json.
 """
 
 import os
@@ -19,10 +19,18 @@ load_dotenv()
 DATA_DIR = os.getenv("DATA_DIR", ".")
 TOKEN_PATH = os.path.join(DATA_DIR, "token.json")
 
-# Combined scopes so a single consent flow covers both services.
+# Combined scopes so a single consent flow covers every service the bot uses.
+#   calendar       — read/write Google Calendar events
+#   tasks          — read/write Google Tasks
+#   gmail.modify   — read emails and create drafts
+#   gmail.send     — send emails (minimum scope required to send)
+#   drive.readonly — read-only Drive access, for safety
 SCOPES = [
     "https://www.googleapis.com/auth/calendar",
     "https://www.googleapis.com/auth/tasks",
+    "https://www.googleapis.com/auth/gmail.modify",
+    "https://www.googleapis.com/auth/gmail.send",
+    "https://www.googleapis.com/auth/drive.readonly",
 ]
 
 
@@ -34,6 +42,13 @@ def main() -> None:
         print("ERROR: GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET must be set in .env")
         sys.exit(1)
 
+    print("Re-authenticating with expanded permissions (Gmail and Drive added).")
+    print(
+        "A browser window will open. Please sign in and approve all requested "
+        "permissions."
+    )
+
+    # InstalledAppFlow expects the OAuth client details in a nested config dict.
     client_config = {
         "installed": {
             "client_id": client_id,
@@ -45,7 +60,6 @@ def main() -> None:
     }
 
     flow = InstalledAppFlow.from_client_config(client_config, SCOPES)
-    print("Opening browser for Google consent...")
     creds = flow.run_local_server(port=0)
 
     os.makedirs(DATA_DIR, exist_ok=True)

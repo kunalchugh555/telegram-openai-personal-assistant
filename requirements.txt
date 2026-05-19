@@ -1,7 +1,9 @@
 python-telegram-bot[job-queue]==21.6
-openai==1.51.0
+openai==2.37.0
 google-api-python-client==2.149.0
 google-auth-oauthlib==1.2.1
 google-auth-httplib2==0.2.0
 pydub==0.25.1
 python-dotenv==1.0.1
+requests==2.32.3
+pypdf==5.1.0

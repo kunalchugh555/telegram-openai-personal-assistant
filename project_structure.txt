@@ -17,21 +17,24 @@ telegram-assistant/
 ├── fly.toml                   # Fly.io deployment config — always-on polling, persistent volume
 ├── bot.py                     # Main entry point — Telegram handlers for voice notes, audio files, and text
 ├── stt.py                     # Speech-to-text using OpenAI gpt-4o-mini-transcribe
-├── llm.py                     # GPT calls with tool calling — Calendar and Tasks tools defined here
+├── llm.py                     # GPT calls with tool calling — all tool schemas, dispatch, web search
 ├── calendar_tools.py          # Google Calendar API — list, create, update, delete events
 ├── tasks_tools.py             # Google Tasks API — list task lists, list, create, complete, delete tasks
+├── gmail_tools.py             # Gmail API — list unread, search, read threads, create drafts, send email
+├── drive_tools.py             # Google Drive API — search files, read file content (read-only)
+├── weather_tools.py           # Open-Meteo weather — current conditions and multi-day forecast (no key)
 ├── db.py                      # SQLite conversation history — get, add, trim, clear per user ID
-├── auth_google.py             # One-time OAuth script — generates token.json for Calendar + Tasks
+├── auth_google.py             # One-time OAuth script — generates token.json for all Google scopes
 └── token.json                 # Google OAuth token — generated locally, never committed
 
 ## Key Design Decisions
 
 - Polling mode (not webhooks): simpler, no HTTPS/domain required, works on Fly.io with auto_stop disabled
-- Single token.json for both Calendar and Tasks (combined OAuth scopes in one consent flow)
+- Single token.json for all Google services (Calendar, Tasks, Gmail, Drive scopes in one consent flow)
 - SQLite for conversation history: zero infrastructure, survives restarts, good enough for personal use
 - DATA_DIR env var controls where token.json and assistant.db live (. locally, /data on Fly.io)
 - Conversation history capped at 20 messages per user to control token costs
-- System prompt injected with current datetime at each call so GPT resolves relative dates correctly
+- System prompt injected with current datetime AND user location/timezone at each call
 - Tool results passed back to GPT before final reply — GPT generates the confirmation message
 - All datetimes are timezone-aware using the calendar's own timezone setting
 - Bot is private: ALLOWED_USER_ID in .env gates all incoming messages
@@ -40,8 +43,17 @@ telegram-assistant/
 - Audio input accepts voice notes, audio uploads, and audio documents (filters.VOICE | AUDIO | Document.AUDIO)
 - Audio conversion auto-detects the source format via ffmpeg, so any decodable format works
 - LLM tool loop is bounded (MAX_TOOL_ROUNDS) so a misbehaving model cannot loop forever
-- Calendar/Tasks auth errors short-circuit the LLM loop with a fixed user-facing message
+- Calendar/Tasks/Gmail/Drive auth errors short-circuit the LLM loop with a fixed user-facing message
 - OpenAI clients are created lazily so the API key is read after .env is loaded
+- Gmail: create_draft only stages a draft; send_email sends immediately. GPT drafts by default and
+  only sends when the user clearly asks to send.
+- Drive uses a read-only OAuth scope (drive.readonly) — drive_tools never writes
+- Drive file content is always truncated to 3000 chars; Sheets to 50 rows — protects GPT context
+- PDFs are read with pypdf; if pypdf is unavailable, PDF reading degrades to a graceful error
+- Weather uses Open-Meteo (free, no API key); US units (Fahrenheit, mph); failures return error payloads
+- Web search: OpenAI's native web search is a Responses API tool, not a Chat Completions tool. It is
+  exposed to GPT as an ordinary `web_search` function tool whose handler (_web_search in llm.py) calls
+  the Responses API. This keeps the proven Chat Completions tool loop unchanged.
 
 ## Environment Variables (see .env.example)
 
@@ -52,19 +64,33 @@ telegram-assistant/
 - GOOGLE_CALENDAR_ID        Calendar to use (default: primary)
 - GOOGLE_TASKS_LIST_ID      Task list to use by default (default: @default)
 - ALLOWED_USER_ID           Your Telegram numeric user ID
+- USER_LOCATION             Home location for weather and context (e.g. "Dubuque, Iowa")
+- USER_TIMEZONE             Your timezone, IANA format (e.g. America/Chicago)
 - DATA_DIR                  Path for token.json and assistant.db (default: .)
 
 ## Models
 
-- STT model:  gpt-4o-mini-transcribe   (defined in stt.py)
-- LLM model:  gpt-5.4-mini             (defined in llm.py)
+- STT model:         gpt-4o-mini-transcribe   (defined in stt.py)
+- LLM model:         gpt-5.4-mini             (defined in llm.py, LLM_MODEL)
+- Web search model:  gpt-5.4-mini             (defined in llm.py, WEB_SEARCH_MODEL — must support
+                                               the Responses API web_search_preview tool)
+
+## OAuth Scopes (auth_google.py)
+
+- https://www.googleapis.com/auth/calendar        read/write Calendar
+- https://www.googleapis.com/auth/tasks           read/write Tasks
+- https://www.googleapis.com/auth/gmail.modify    read mail and create drafts
+- https://www.googleapis.com/auth/gmail.send      send mail
+- https://www.googleapis.com/auth/drive.readonly  read-only Drive access
 
 ## Important Notes
 
 - Run auth_google.py once before starting the bot — generates token.json
+- Re-run auth_google.py whenever scopes change (e.g. after Gmail/Drive were added)
+- Enable Calendar, Tasks, Gmail, and Drive APIs in the Google Cloud project
 - Find your Telegram user ID by messaging @userinfobot
 - ffmpeg must be installed (handled in Dockerfile; install manually for local dev)
 - On Fly.io, token.json must be copied to the persistent volume after first auth
-- The bot processes voice notes, uploaded audio files, and text messages — all other types are silently ignored
+- The bot processes voice notes, uploaded audio files, and text messages — all other types are ignored
 - /start replies with a capabilities summary
 - /clear wipes conversation history for that user

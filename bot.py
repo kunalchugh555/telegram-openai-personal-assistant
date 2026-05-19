@@ -37,9 +37,14 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID") or "0")
 
 START_MESSAGE = (
-    "Hi! I'm your personal assistant. Send me a voice message or text and I can:\n\n"
+    "Hi! I'm your personal assistant. Send me a voice message, an audio file, "
+    "or text and I can:\n\n"
     "Manage your Google Calendar — check, add, move, or cancel events.\n"
     "Manage your Google Tasks — list, add, complete, or delete tasks.\n"
+    "Handle your Gmail — read unread mail, search, draft replies, and send email.\n"
+    "Search your Google Drive and read Docs, Sheets, and PDFs.\n"
+    "Search the web for current news, scores, prices, and business hours.\n"
+    "Check the weather and forecast for anywhere.\n"
     "Answer general questions, with context carried across messages.\n\n"
     "Use /clear to start a fresh conversation."
 )

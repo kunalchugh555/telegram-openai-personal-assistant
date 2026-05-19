@@ -1,9 +1,23 @@
-"""GPT querying with tool calling for Google Calendar and Google Tasks.
+"""GPT querying with tool calling for the personal assistant.
 
 The public entry point is `query(user_id, user_message)`. It loads conversation
-history, injects the current datetime into the system prompt, runs a tool-calling
-loop against the OpenAI Chat Completions API, persists the exchange, and returns
-the final plain-text reply.
+history, injects the current datetime and the user's location into the system
+prompt, runs a tool-calling loop against the OpenAI Chat Completions API,
+persists the exchange, and returns the final plain-text reply.
+
+Tools available to GPT:
+  - Google Calendar  : list / create / update / delete events
+  - Google Tasks     : list task lists, list / create / complete / delete tasks
+  - Gmail            : list unread, search, read threads, draft, send
+  - Google Drive     : search files, read file content
+  - Weather          : current conditions and multi-day forecast (Open-Meteo)
+  - Web search       : `web_search` runs an OpenAI native web search (see below)
+
+Web search note: OpenAI's native web search is a built-in tool of the
+Responses API, not the Chat Completions API used for the main loop. So
+`web_search` is exposed to GPT as an ordinary function tool; its handler
+(`_web_search`) performs the actual search through the Responses API and
+returns the text. This keeps the proven Chat Completions tool loop intact.
 """
 
 import datetime as dt
@@ -16,8 +30,13 @@ from openai import OpenAI
 
 import calendar_tools
 import db
+import drive_tools
+import gmail_tools
 import tasks_tools
+import weather_tools
 from calendar_tools import CalendarAuthError
+from drive_tools import DriveAuthError
+from gmail_tools import GmailAuthError
 from tasks_tools import TasksAuthError
 
 load_dotenv()
@@ -28,6 +47,12 @@ LLM_MODEL = "gpt-5.4-mini"
 HISTORY_LIMIT = 20
 MAX_TOOL_ROUNDS = 6
 
+# Model used for the native web search call. Must be a model that supports the
+# Responses API `web_search_preview` tool; kept equal to LLM_MODEL by default.
+WEB_SEARCH_MODEL = LLM_MODEL
+# Search depth: "low" | "medium" | "high" — medium balances quality and cost.
+WEB_SEARCH_CONTEXT_SIZE = "medium"
+
 # User-facing error messages.
 CALENDAR_AUTH_MESSAGE = (
     "I can't access your calendar right now. Please run python auth_google.py "
@@ -35,6 +60,14 @@ CALENDAR_AUTH_MESSAGE = (
 )
 TASKS_AUTH_MESSAGE = (
     "I can't access your tasks right now. Please run python auth_google.py "
+    "to re-authenticate."
+)
+GMAIL_AUTH_MESSAGE = (
+    "I can't access your Gmail right now. Please run python auth_google.py "
+    "to re-authenticate."
+)
+DRIVE_AUTH_MESSAGE = (
+    "I can't access your Drive right now. Please run python auth_google.py "
     "to re-authenticate."
 )
 OPENAI_ERROR_MESSAGE = "Something went wrong on my end. Please try again in a moment."
@@ -59,23 +92,36 @@ Today is {day_of_week}, {date} at {time} ({timezone}).
 You have access to the user's Google Calendar and Google Tasks.
 When they ask you to add, change, delete or check calendar events or tasks, use the appropriate tools.
 After completing a tool action, confirm in plain language what you did.
-When interpreting relative dates like "Tuesday", "next week", "tomorrow" — resolve them from today's date above."""
+When interpreting relative dates like "Tuesday", "next week", "tomorrow" — resolve them from today's date above.
+
+You can also:
+- Read and search the user's Gmail, create email drafts, and send emails (only send when the user clearly asks to send rather than draft — otherwise create a draft)
+- Search and read files from the user's Google Drive
+- Search the web for current information, news, sports, business hours, and anything time-sensitive
+- Get weather for any location (default: user's home location)
+
+User's home location: {user_location}
+User's timezone: {user_timezone}"""
 
 
 def _system_prompt() -> str:
-    """Build the system prompt with the current local datetime substituted in."""
+    """Build the system prompt with the current datetime and user context filled in."""
     now = dt.datetime.now().astimezone()
     return SYSTEM_PROMPT_TEMPLATE.format(
         day_of_week=now.strftime("%A"),
         date=now.strftime("%B %-d, %Y"),
         time=now.strftime("%-I:%M %p"),
         timezone=now.strftime("%Z") or "local time",
+        user_location=os.getenv("USER_LOCATION") or "not set",
+        user_timezone=os.getenv("USER_TIMEZONE") or "not set",
     )
 
 
 # --- Tool schemas exposed to GPT -------------------------------------------------
+# Chat Completions expects each tool as {"type": "function", "function": {...}}.
 
 TOOLS = [
+    # --- Google Calendar ---------------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -139,6 +185,7 @@ TOOLS = [
             },
         },
     },
+    # --- Google Tasks ------------------------------------------------------------
     {
         "type": "function",
         "function": {
@@ -218,16 +265,231 @@ TOOLS = [
             },
         },
     },
+    # --- Gmail -------------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "list_unread_emails",
+            "description": "List unread emails in the inbox.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum emails to return (default 10)",
+                    },
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_emails",
+            "description": (
+                "Search emails by any criteria — sender, subject, keywords, date "
+                "range. Use Gmail search syntax, e.g. 'from:john invoice'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Gmail search query string"},
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum emails to return (default 5)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_email_thread",
+            "description": "Read the full conversation thread of an email.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "thread_id": {"type": "string"},
+                },
+                "required": ["thread_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_draft",
+            "description": "Create an email draft. Never sends automatically — draft only.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                    "reply_to_thread_id": {
+                        "type": "string",
+                        "description": "Optional — provide to reply to an existing thread",
+                    },
+                },
+                "required": ["to", "subject", "body"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_email",
+            "description": (
+                "Compose and send an email immediately. Use only when the user "
+                "clearly asks to send; otherwise use create_draft."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "to": {"type": "string", "description": "Recipient email address"},
+                    "subject": {"type": "string"},
+                    "body": {"type": "string"},
+                    "reply_to_thread_id": {
+                        "type": "string",
+                        "description": "Optional — provide to reply to an existing thread",
+                    },
+                },
+                "required": ["to", "subject", "body"],
+            },
+        },
+    },
+    # --- Google Drive ------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "search_files",
+            "description": "Search Google Drive files by name or content.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum files to return (default 5)",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_file_content",
+            "description": (
+                "Read the text content of a Google Drive file. Works with Docs, "
+                "Sheets, and PDFs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_id": {"type": "string"},
+                },
+                "required": ["file_id"],
+            },
+        },
+    },
+    # --- Weather -----------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "get_weather",
+            "description": (
+                "Get current weather and forecast for a location. If no location "
+                "is given, uses the user's home location."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "location": {
+                        "type": "string",
+                        "description": "Optional — city name or address",
+                    },
+                    "lat": {"type": "number", "description": "Optional latitude"},
+                    "lon": {"type": "number", "description": "Optional longitude"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_forecast",
+            "description": "Get a multi-day weather forecast.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "integer",
+                        "description": "Number of days, default 7, max 7",
+                    },
+                    "location": {"type": "string", "description": "Optional location"},
+                },
+                "required": [],
+            },
+        },
+    },
+    # --- Web search --------------------------------------------------------------
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": (
+                "Search the web for current, real-time information — news, sports "
+                "scores, prices, business hours, recent events, and anything "
+                "time-sensitive or newer than your training data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to search for"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 
-def _execute_tool(name: str, args: dict):
-    """Dispatch a single tool call to the matching Calendar/Tasks function.
+def _web_search(query: str) -> dict:
+    """Run an OpenAI native web search via the Responses API and return the text.
 
-    Auth errors are allowed to propagate so the caller can short-circuit with a
-    clear user-facing message. Other errors are returned as a result payload so
-    GPT can relay them gracefully.
+    Web search is a built-in Responses API tool, so this is a separate call
+    from the Chat Completions loop. Failures degrade gracefully — they return
+    an error payload rather than raising, so the rest of the reply still works.
     """
+    try:
+        response = _get_client().responses.create(
+            model=WEB_SEARCH_MODEL,
+            tools=[{
+                "type": "web_search_preview",
+                "search_context_size": WEB_SEARCH_CONTEXT_SIZE,
+            }],
+            input=query,
+        )
+        return {"result": response.output_text}
+    except Exception as exc:
+        logger.error("Web search failed: %s", exc)
+        return {"error": "Web search is unavailable right now."}
+
+
+def _execute_tool(name: str, args: dict):
+    """Dispatch a single tool call to its backing function.
+
+    Auth errors (Calendar/Tasks/Gmail/Drive) are allowed to propagate so the
+    caller can short-circuit with a clear user-facing message. Other errors are
+    returned as a result payload so GPT can relay them gracefully.
+    """
+    # --- Calendar ---
     if name == "list_events":
         return calendar_tools.list_events(args["start_date"], args["end_date"])
     if name == "create_event":
@@ -246,6 +508,8 @@ def _execute_tool(name: str, args: dict):
         )
     if name == "delete_event":
         return calendar_tools.delete_event(args["event_id"])
+
+    # --- Tasks ---
     if name == "list_task_lists":
         return tasks_tools.list_task_lists()
     if name == "list_tasks":
@@ -264,6 +528,40 @@ def _execute_tool(name: str, args: dict):
         return tasks_tools.complete_task(args["task_id"], args["task_list_id"])
     if name == "delete_task":
         return tasks_tools.delete_task(args["task_id"], args["task_list_id"])
+
+    # --- Gmail ---
+    if name == "list_unread_emails":
+        return gmail_tools.list_unread_emails(args.get("max_results", 10))
+    if name == "search_emails":
+        return gmail_tools.search_emails(args["query"], args.get("max_results", 5))
+    if name == "get_email_thread":
+        return gmail_tools.get_email_thread(args["thread_id"])
+    if name == "create_draft":
+        return gmail_tools.create_draft(
+            args["to"], args["subject"], args["body"], args.get("reply_to_thread_id")
+        )
+    if name == "send_email":
+        return gmail_tools.send_email(
+            args["to"], args["subject"], args["body"], args.get("reply_to_thread_id")
+        )
+
+    # --- Drive ---
+    if name == "search_files":
+        return drive_tools.search_files(args["query"], args.get("max_results", 5))
+    if name == "read_file_content":
+        return drive_tools.read_file_content(args["file_id"])
+
+    # --- Weather ---
+    if name == "get_weather":
+        return weather_tools.get_weather(
+            args.get("location"), args.get("lat"), args.get("lon")
+        )
+    if name == "get_forecast":
+        return weather_tools.get_forecast(args.get("days", 7), args.get("location"))
+
+    # --- Web search ---
+    if name == "web_search":
+        return _web_search(args["query"])
 
     logger.error("Unknown tool call from GPT: %s", name)
     return {"error": f"Unknown tool '{name}'"}
@@ -288,6 +586,7 @@ def query(user_id: int, user_message: str) -> str:
             )
             choice = response.choices[0].message
 
+            # No tool calls means GPT produced its final answer.
             if not choice.tool_calls:
                 reply = (choice.content or "").strip() or "Done."
                 db.add_message(user_id, "user", user_message)
@@ -295,7 +594,7 @@ def query(user_id: int, user_message: str) -> str:
                 db.trim_history(user_id, HISTORY_LIMIT)
                 return reply
 
-            # Record the assistant's tool-call turn, then run each tool.
+            # Record the assistant's tool-call turn, then run each requested tool.
             messages.append({
                 "role": "assistant",
                 "content": choice.content,
@@ -321,12 +620,14 @@ def query(user_id: int, user_message: str) -> str:
 
                 try:
                     result = _execute_tool(name, args)
-                except (CalendarAuthError, TasksAuthError):
+                except (CalendarAuthError, TasksAuthError, GmailAuthError, DriveAuthError):
+                    # Re-raise auth errors so query() can short-circuit cleanly.
                     raise
                 except Exception as exc:
                     logger.error("Tool '%s' failed: %s", name, exc)
                     result = {"error": str(exc)}
 
+                # Feed the tool result back so GPT can compose the final reply.
                 messages.append({
                     "role": "tool",
                     "tool_call_id": tool_call.id,
@@ -343,6 +644,12 @@ def query(user_id: int, user_message: str) -> str:
     except TasksAuthError as exc:
         logger.error("Tasks auth error for user %s: %s", user_id, exc)
         return TASKS_AUTH_MESSAGE
+    except GmailAuthError as exc:
+        logger.error("Gmail auth error for user %s: %s", user_id, exc)
+        return GMAIL_AUTH_MESSAGE
+    except DriveAuthError as exc:
+        logger.error("Drive auth error for user %s: %s", user_id, exc)
+        return DRIVE_AUTH_MESSAGE
     except Exception as exc:
         logger.error("OpenAI query failed for user %s: %s", user_id, exc)
         return OPENAI_ERROR_MESSAGE
