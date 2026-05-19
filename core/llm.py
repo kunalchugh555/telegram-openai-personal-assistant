@@ -83,7 +83,7 @@ def _get_client() -> OpenAI:
     return _client
 
 
-SYSTEM_PROMPT_TEMPLATE = """You are a personal assistant. Be concise and direct.
+SYSTEM_PROMPT_TEMPLATE = """You are a personal assistant for {user_name}. Be concise and direct.
 This is a chat interface so reply in plain sentences — no markdown, no bullet points, no bold text.
 Keep replies short unless detail is genuinely needed.
 
@@ -116,6 +116,7 @@ def _system_prompt() -> str:
     """Build the system prompt with the current datetime and user context filled in."""
     now = dt.datetime.now().astimezone()
     return SYSTEM_PROMPT_TEMPLATE.format(
+        user_name=os.getenv("USER_NAME") or "the user",
         day_of_week=now.strftime("%A"),
         date=now.strftime("%B %-d, %Y"),
         time=now.strftime("%-I:%M %p"),

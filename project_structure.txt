@@ -114,6 +114,7 @@ LLM:
 - GOOGLE_CALENDAR_ID        Calendar to use (default: primary)
 - GOOGLE_TASKS_LIST_ID      Task list to use by default (default: @default)
 - ALLOWED_USER_ID           Your Telegram numeric user ID
+- USER_NAME                 Your name — injected into the system prompt so GPT addresses you by name
 - USER_LOCATION             Home location for weather and context (e.g. "Dubuque, Iowa")
 - USER_TIMEZONE             Your timezone, IANA format (e.g. America/Chicago)
 - DATA_DIR                  Path for token.json and assistant.db (default: .)
