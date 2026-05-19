@@ -47,7 +47,8 @@ HOURLY_FIELDS = (
     "windspeed_10m,apparent_temperature"
 )
 DAILY_FIELDS = (
-    "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weathercode"
+    "temperature_2m_max,temperature_2m_min,precipitation_probability_max,"
+    "weathercode,windspeed_10m_max,windgusts_10m_max"
 )
 
 # WMO weather interpretation codes mapped to plain English.
@@ -173,6 +174,8 @@ def _format_weather(data: dict, label: str) -> dict:
     lows = daily.get("temperature_2m_min", [])
     precip = daily.get("precipitation_probability_max", [])
     codes = daily.get("weathercode", [])
+    wind_max = daily.get("windspeed_10m_max", [])
+    gust_max = daily.get("windgusts_10m_max", [])
 
     def day_entry(i: int) -> dict:
         return {
@@ -182,6 +185,8 @@ def _format_weather(data: dict, label: str) -> dict:
             "low": _round(_at(lows, i)),
             "condition": _condition(_at(codes, i)),
             "precip_chance": _percent(_at(precip, i)),
+            "wind_mph_max": _round(_at(wind_max, i)),
+            "wind_gust_mph_max": _round(_at(gust_max, i)),
         }
 
     all_days = [day_entry(i) for i in range(len(times))]
@@ -206,6 +211,8 @@ def _format_weather(data: dict, label: str) -> dict:
             "low": today.get("low"),
             "precip_chance": today.get("precip_chance"),
             "condition": today.get("condition"),
+            "wind_mph_max": today.get("wind_mph_max"),
+            "wind_gust_mph_max": today.get("wind_gust_mph_max"),
         },
         "week": week,   # today plus the next 13 days
         "past": past,   # the previous 7 days

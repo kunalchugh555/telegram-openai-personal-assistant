@@ -60,9 +60,11 @@ telegram-assistant/
 - Drive file content is always truncated to 3000 chars; Sheets to 50 rows — protects GPT context
 - PDFs are read with pypdf; if pypdf is unavailable, PDF reading degrades to a graceful error
 - Weather uses Open-Meteo (free, no API key); US units (Fahrenheit, mph); failures return error payloads
-- Daily rain/snow email: bot.py registers a job_queue.run_daily job at 5am (USER_TIMEZONE); sends to
-  USER_EMAIL via Gmail if today's weather condition contains rain/snow keywords; GmailAuthError is caught
-  and logged without crashing the bot
+- Daily weather alert email: bot.py registers a job_queue.run_daily job at 5am (USER_TIMEZONE); sends to
+  USER_EMAIL via Gmail if today's condition contains wet keywords (rain, snow, drizzle, shower, sleet,
+  hail, thunderstorm, freezing, fog) OR wind exceeds NWS thresholds (advisory: >=31mph sustained /
+  >=46mph gusts; high wind warning: >=40mph / >=58mph gusts); email includes daily summary + hourly
+  breakdown 6am-10pm; GmailAuthError caught and logged without crashing the bot
 - Google Maps uses the Directions API (travel time) and Places Text Search API (nearby search); both
   require GOOGLE_MAPS_API_KEY (not OAuth); missing key returns a graceful error payload
 - Google Meet: create_event accepts add_meet_link=True; uses conferenceDataVersion=1 and a uuid requestId;

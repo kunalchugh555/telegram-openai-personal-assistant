@@ -45,25 +45,33 @@ START_MESSAGE = (
     "Hi! I'm your personal assistant. Send me a voice message, an audio file, "
     "or text and I can:\n\n"
     "Manage your Google Calendar — check, add, move, or cancel events. "
-    "I can add a Google Meet link when creating meetings.\n"
-    "Manage your Google Tasks — list, add, complete, or delete tasks.\n"
-    "Handle your Gmail — read unread mail, search, draft replies, and send email.\n"
-    "Search your Google Drive and read Docs, Sheets, and PDFs.\n"
-    "Get travel time and directions via Google Maps.\n"
-    "Search for nearby restaurants, stores, and businesses.\n"
-    "Search the web for current news, scores, prices, and business hours.\n"
-    "Check the weather and forecast for anywhere.\n"
+    "I can add a Google Meet link when creating meetings.\n\n"
+    "Manage your Google Tasks — list, add, complete, or delete tasks.\n\n"
+    "Handle your Gmail — read unread mail, search, draft replies, and send email.\n\n"
+    "Search your Google Drive and read Docs, Sheets, and PDFs.\n\n"
+    "Get travel time and directions via Google Maps.\n\n"
+    "Search for nearby restaurants, stores, and businesses.\n\n"
+    "Search the web for current news, scores, prices, and business hours.\n\n"
+    "Check the weather and forecast for anywhere.\n\n"
     "Answer general questions, with context carried across messages.\n\n"
-    "I'll also email you each morning at 5am if rain or snow is in the forecast.\n\n"
+    "I'll also email you each morning at 5am if rain, snow, fog, or high wind "
+    "is in the forecast.\n\n"
     "Use /clear to start a fresh conversation."
 )
 
 GENERIC_ERROR = "Something went wrong handling that. Please try again."
 STT_ERROR = "Sorry, I couldn't understand that audio. Try again or type your message."
 
-_WET_KEYWORDS = frozenset(
-    {"drizzle", "rain", "shower", "snow", "sleet", "hail", "thunderstorm", "freezing"}
-)
+_WET_KEYWORDS = frozenset({
+    "drizzle", "rain", "shower", "snow", "sleet", "hail",
+    "thunderstorm", "freezing", "fog",
+})
+
+# NWS wind thresholds (mph)
+_WIND_ADVISORY_MPH = 31
+_WIND_ADVISORY_GUST_MPH = 46
+_HIGH_WIND_MPH = 40
+_HIGH_WIND_GUST_MPH = 58
 
 
 def _is_wet_weather(condition: str) -> bool:
@@ -72,7 +80,7 @@ def _is_wet_weather(condition: str) -> bool:
 
 
 async def rain_alert_job(context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Daily 5am job: email USER_EMAIL if rain or snow is forecast for today."""
+    """Daily 5am job: email USER_EMAIL if notable weather is forecast for today."""
     user_email = os.getenv("USER_EMAIL")
     if not user_email:
         logger.warning("rain_alert_job: USER_EMAIL not set, skipping")
@@ -86,24 +94,61 @@ async def rain_alert_job(context: ContextTypes.DEFAULT_TYPE) -> None:
 
         today = weather.get("today", {})
         condition = today.get("condition", "")
-        if not _is_wet_weather(condition):
-            return
-
-        location = weather.get("location", os.getenv("USER_LOCATION", "your area"))
         high = today.get("high", "?")
         low = today.get("low", "?")
         precip_chance = today.get("precip_chance", "unknown")
+        location = weather.get("location", os.getenv("USER_LOCATION", "your area"))
+        wind_max = today.get("wind_mph_max") or 0
+        gust_max = today.get("wind_gust_mph_max") or 0
 
-        subject = f"Weather alert: {condition} today in {location}"
-        body = (
-            f"Heads up — {condition} is in the forecast for today.\n\n"
-            f"Location: {location}\n"
-            f"High: {high}°F   Low: {low}°F\n"
-            f"Precipitation chance: {precip_chance}\n\n"
-            "— Your assistant"
-        )
-        gmail_tools.send_email(user_email, subject, body)
-        logger.info("rain_alert_job: sent weather alert to %s (%s)", user_email, condition)
+        wet = _is_wet_weather(condition)
+        high_wind = wind_max >= _HIGH_WIND_MPH or gust_max >= _HIGH_WIND_GUST_MPH
+        wind_advisory = wind_max >= _WIND_ADVISORY_MPH or gust_max >= _WIND_ADVISORY_GUST_MPH
+
+        if not wet and not wind_advisory:
+            return
+
+        # Build alert label for subject + opening line
+        alerts = []
+        if wet:
+            alerts.append(condition)
+        if high_wind:
+            alerts.append("high wind warning")
+        elif wind_advisory:
+            alerts.append("wind advisory")
+        alert_str = " + ".join(alerts)
+
+        # Fetch hourly breakdown (6am–10pm)
+        hourly_lines = []
+        hourly_data = weather_tools.get_hourly_forecast()
+        if "hours" in hourly_data:
+            for h in hourly_data["hours"][6:23]:
+                t = h.get("time", "").replace(":00", "")
+                temp = h.get("temp", "?")
+                cond = h.get("condition", "")
+                precip = h.get("precip_chance", "")
+                wind = h.get("wind_mph", "?")
+                hourly_lines.append(f"  {t:<7} {temp}°F  {cond}  {precip}  {wind} mph")
+
+        # Assemble email
+        subject = f"Weather alert: {alert_str} today in {location}"
+        body_parts = [
+            f"Heads up — {alert_str} is in the forecast for today.\n",
+            f"Location: {location}",
+            f"High: {high}°F   Low: {low}°F",
+            f"Precipitation chance: {precip_chance}",
+        ]
+        if wind_advisory or high_wind:
+            body_parts.append(
+                f"Max wind: {wind_max} mph sustained   {gust_max} mph gusts"
+            )
+        if hourly_lines:
+            body_parts.append("\nHourly (6am–10pm):")
+            body_parts.extend(hourly_lines)
+        body_parts.append("\n— Your assistant")
+
+        gmail_tools.send_email(user_email, subject, "\n".join(body_parts))
+        logger.info("rain_alert_job: sent alert to %s (%s)", user_email, alert_str)
 
     except GmailAuthError:
         logger.error("rain_alert_job: Gmail auth failed — re-run auth_google.py")
