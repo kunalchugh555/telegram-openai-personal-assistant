@@ -1,0 +1,68 @@
+# project_structure.txt
+# Source of truth for repo layout, design decisions, and important notes.
+# Claude Code must read this before starting any prompt and update it after any prompt that changes files.
+
+## File Tree
+
+telegram-assistant/
+├── CLAUDE.md                  # Claude Code instructions and mandatory workflow rules
+├── LICENSE                    # MIT License
+├── README.md                  # Setup, deployment, and usage instructions
+├── project_structure.txt      # This file — always keep up to date
+├── .gitignore                 # Excludes secrets, cache, DB, token
+├── .env.example               # Template for required environment variables
+├── .env                       # Local secrets — never committed
+├── requirements.txt           # Pinned Python dependencies
+├── Dockerfile                 # Container image — installs ffmpeg, deps, runs bot.py
+├── fly.toml                   # Fly.io deployment config — always-on polling, persistent volume
+├── bot.py                     # Main entry point — Telegram handlers for voice and text
+├── stt.py                     # Speech-to-text using OpenAI gpt-4o-mini-transcribe
+├── llm.py                     # GPT calls with tool calling — Calendar and Tasks tools defined here
+├── calendar_tools.py          # Google Calendar API — list, create, update, delete events
+├── tasks_tools.py             # Google Tasks API — list task lists, list, create, complete, delete tasks
+├── db.py                      # SQLite conversation history — get, add, trim, clear per user ID
+├── auth_google.py             # One-time OAuth script — generates token.json for Calendar + Tasks
+└── token.json                 # Google OAuth token — generated locally, never committed
+
+## Key Design Decisions
+
+- Polling mode (not webhooks): simpler, no HTTPS/domain required, works on Fly.io with auto_stop disabled
+- Single token.json for both Calendar and Tasks (combined OAuth scopes in one consent flow)
+- SQLite for conversation history: zero infrastructure, survives restarts, good enough for personal use
+- DATA_DIR env var controls where token.json and assistant.db live (. locally, /data on Fly.io)
+- Conversation history capped at 20 messages per user to control token costs
+- System prompt injected with current datetime at each call so GPT resolves relative dates correctly
+- Tool results passed back to GPT before final reply — GPT generates the confirmation message
+- All datetimes are timezone-aware using the calendar's own timezone setting
+- Bot is private: ALLOWED_USER_ID in .env gates all incoming messages
+- "Thinking..." message ("...") sent immediately on voice receipt, then edited to final reply (better UX)
+- No TTS — replies are plain text Telegram messages
+- LLM tool loop is bounded (MAX_TOOL_ROUNDS) so a misbehaving model cannot loop forever
+- Calendar/Tasks auth errors short-circuit the LLM loop with a fixed user-facing message
+- OpenAI clients are created lazily so the API key is read after .env is loaded
+
+## Environment Variables (see .env.example)
+
+- TELEGRAM_BOT_TOKEN        Telegram bot token from @BotFather
+- OPENAI_API_KEY            OpenAI API key
+- GOOGLE_CLIENT_ID          Google OAuth client ID
+- GOOGLE_CLIENT_SECRET      Google OAuth client secret
+- GOOGLE_CALENDAR_ID        Calendar to use (default: primary)
+- GOOGLE_TASKS_LIST_ID      Task list to use by default (default: @default)
+- ALLOWED_USER_ID           Your Telegram numeric user ID
+- DATA_DIR                  Path for token.json and assistant.db (default: .)
+
+## Models
+
+- STT model:  gpt-4o-mini-transcribe   (defined in stt.py)
+- LLM model:  gpt-5.4-mini             (defined in llm.py)
+
+## Important Notes
+
+- Run auth_google.py once before starting the bot — generates token.json
+- Find your Telegram user ID by messaging @userinfobot
+- ffmpeg must be installed (handled in Dockerfile; install manually for local dev)
+- On Fly.io, token.json must be copied to the persistent volume after first auth
+- The bot only processes voice and text messages — all other message types are silently ignored
+- /start replies with a capabilities summary
+- /clear wipes conversation history for that user
