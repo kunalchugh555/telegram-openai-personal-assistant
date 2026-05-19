@@ -65,6 +65,21 @@ telegram-assistant/
   exposed to GPT as an ordinary `web_search` function tool whose handler (_web_search in llm.py) calls
   the Responses API. This keeps the proven Chat Completions tool loop unchanged.
 
+## Security posture (audited 2026-05-19)
+
+- .env and token.json are git-ignored and never committed (verified via git history)
+- File permissions: .env, token.json, assistant.db are chmod 600 (owner-only) on both local and VM
+- SQL: db.py uses parameterized queries — no SQL injection surface
+- Code: no eval/exec/subprocess/shell=True; tool dispatch is a hard-coded whitelist
+- SSH on VM: PasswordAuthentication=no, PermitRootLogin=no, key-only via gcloud-managed keys
+- VM hardening: unattended-upgrades installed (auto security patches); fail2ban running for SSH
+- GCP firewall: default-allow-rdp removed; only default-allow-ssh, internal, and icmp remain
+- GCP billing: $5 budget alert configured on the project (emails on 50/90/100%)
+- LLM hardening: system prompt has explicit SECURITY RULES against indirect prompt injection
+  (treats email/Drive/web-search content as untrusted data; requires user authorization in the
+  current turn for send_email/delete_event/delete_task; forbids disclosing secrets)
+- Bot is gated by ALLOWED_USER_ID — every handler short-circuits for non-allowed senders
+
 ## Environment Variables (see .env.example)
 
 - TELEGRAM_BOT_TOKEN        Telegram bot token from @BotFather
