@@ -221,6 +221,89 @@ an email..."). Drafts and sent mail both appear in your normal Gmail.
 
 Rough total: **~$1–3/month** in OpenAI API costs only. Hosting is free.
 
+## Security
+
+### What's hardened out of the box
+
+**Bot access control**
+The bot only responds to the Telegram user ID set in `ALLOWED_USER_ID`. Every handler checks this before doing anything else. Anyone else who finds your bot gets silence.
+
+**Prompt injection defense**
+The LLM system prompt explicitly treats email bodies, calendar descriptions, Drive file contents, and web search results as untrusted data. If any of that content contains text like "ignore previous instructions" or asks the bot to send an email or delete something, the bot is instructed to flag it to you and stop. It will never act on instructions embedded in your data without a clear request from you in the current message.
+
+**No secrets in code**
+API keys, tokens, and credentials are read exclusively from environment variables via `.env`. The `.gitignore` ensures `.env`, `token.json`, and `assistant.db` are never committed. The Google OAuth token is generated locally and copied to the VM — it never passes through any third-party system.
+
+**Dependency security**
+All dependencies are pinned to specific versions and audited with `pip-audit`. The current set has zero known CVEs. Run `pip-audit` after any `pip install` to verify.
+
+**SQL injection prevention**
+All database queries in `core/db.py` use parameterized statements. There is no string-formatted SQL anywhere in the codebase.
+
+**No unsafe code execution**
+There is no `eval()`, `exec()`, `subprocess` with `shell=True`, or any other mechanism that could execute arbitrary code. Tool dispatch uses a hard-coded whitelist — GPT cannot call functions outside that list.
+
+**TLS verification**
+All outbound HTTPS requests use verified TLS (`verify=False` appears nowhere in the codebase).
+
+---
+
+### VM and infrastructure hardening (GCP)
+
+**SSH**
+- Password authentication is disabled — key-only login
+- Root login is disabled
+- `block-project-ssh-keys=true` on the VM instance — project-wide SSH keys cannot SSH in
+- `fail2ban` monitors the SSH jail and auto-bans IPs after repeated failed attempts
+
+**No service account on the VM**
+The VM has no GCP service account attached. If malware ran on the VM and tried to call the GCP metadata server at `169.254.169.254` to steal a token, it would get HTTP 404. The bot has no GCP IAM permissions.
+
+**systemd sandboxing**
+The bot runs as a non-root user under a hardened systemd unit (security score 3.2/10 — lower is better). Key restrictions:
+- `NoNewPrivileges`, `PrivateTmp`, `PrivateDevices`
+- `ProtectSystem=strict` with write access limited to the app directory only
+- Empty `CapabilityBoundingSet` — the process has no Linux capabilities
+- `RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX` — only internet and local socket families
+- `RestrictNamespaces`, `RestrictRealtime`, `RestrictSUIDSGID`, `LockPersonality`
+
+**File permissions**
+`.env`, `token.json`, and `assistant.db` are all `chmod 600` (owner-read/write only) on both your local machine and the VM.
+
+**Auto security patches**
+`unattended-upgrades` is installed and active on the VM — OS security patches apply automatically without manual intervention.
+
+**Firewall**
+Only three GCP firewall rules are active: SSH (port 22), internal VPC traffic, and ICMP (ping). No other ports are open.
+
+**Budget alert**
+A $5/month budget alert is set on the GCP project. You'll receive an email at 50%, 90%, and 100% of that limit — a signal if something unexpected is running.
+
+---
+
+### What you should do manually
+
+**1. Set an OpenAI spending limit**
+Go to [platform.openai.com](https://platform.openai.com) → Billing → Usage limits. Set a hard monthly cap. The bot costs roughly $1–3/month at normal personal use; a limit of $10–20 prevents runaway charges if something goes wrong.
+
+**2. Rotate any credentials that appeared in chat**
+If you pasted API keys, tokens, or passwords into the Telegram chat during setup, rotate them now:
+- Telegram bot token: message @BotFather → `/mybots` → select your bot → API Token → Revoke
+- OpenAI API key: platform.openai.com → API keys → delete the old one, create a new one
+- Google OAuth: if the client secret was shared, regenerate it in Google Cloud Console → Credentials
+
+**3. Keep token.json off shared systems**
+`token.json` grants full read/write access to your Calendar, Tasks, Gmail, and Drive. Never put it in cloud storage, email it, or commit it. The `.gitignore` prevents accidental commits, but be deliberate about where you copy it.
+
+**4. Re-run pip-audit after updates**
+```bash
+source .venv/bin/activate
+pip-audit
+```
+If any CVEs appear, upgrade the affected package and re-test.
+
+---
+
 ## License
 
 MIT — see [LICENSE](LICENSE).
