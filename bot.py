@@ -6,9 +6,11 @@ calling. Only ALLOWED_USER_ID may interact with the bot; all other senders are
 ignored silently.
 """
 
+import datetime as dt
 import logging
 import os
 import tempfile
+import zoneinfo
 
 from dotenv import load_dotenv
 from pydub import AudioSegment
@@ -23,7 +25,10 @@ from telegram.ext import (
 
 import core.db as db
 import core.llm as llm
+import tools.gmail_tools as gmail_tools
+import tools.weather_tools as weather_tools
 from core.stt import transcribe
+from tools.gmail_tools import GmailAuthError
 
 load_dotenv()
 
@@ -39,18 +44,71 @@ ALLOWED_USER_ID = int(os.getenv("ALLOWED_USER_ID") or "0")
 START_MESSAGE = (
     "Hi! I'm your personal assistant. Send me a voice message, an audio file, "
     "or text and I can:\n\n"
-    "Manage your Google Calendar — check, add, move, or cancel events.\n"
+    "Manage your Google Calendar — check, add, move, or cancel events. "
+    "I can add a Google Meet link when creating meetings.\n"
     "Manage your Google Tasks — list, add, complete, or delete tasks.\n"
     "Handle your Gmail — read unread mail, search, draft replies, and send email.\n"
     "Search your Google Drive and read Docs, Sheets, and PDFs.\n"
+    "Get travel time and directions via Google Maps.\n"
+    "Search for nearby restaurants, stores, and businesses.\n"
     "Search the web for current news, scores, prices, and business hours.\n"
     "Check the weather and forecast for anywhere.\n"
     "Answer general questions, with context carried across messages.\n\n"
+    "I'll also email you each morning at 5am if rain or snow is in the forecast.\n\n"
     "Use /clear to start a fresh conversation."
 )
 
 GENERIC_ERROR = "Something went wrong handling that. Please try again."
 STT_ERROR = "Sorry, I couldn't understand that audio. Try again or type your message."
+
+_WET_KEYWORDS = frozenset(
+    {"drizzle", "rain", "shower", "snow", "sleet", "hail", "thunderstorm", "freezing"}
+)
+
+
+def _is_wet_weather(condition: str) -> bool:
+    c = condition.lower()
+    return any(kw in c for kw in _WET_KEYWORDS)
+
+
+async def rain_alert_job(context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Daily 5am job: email USER_EMAIL if rain or snow is forecast for today."""
+    user_email = os.getenv("USER_EMAIL")
+    if not user_email:
+        logger.warning("rain_alert_job: USER_EMAIL not set, skipping")
+        return
+
+    try:
+        weather = weather_tools.get_weather()
+        if "error" in weather:
+            logger.error("rain_alert_job: weather fetch failed: %s", weather["error"])
+            return
+
+        today = weather.get("today", {})
+        condition = today.get("condition", "")
+        if not _is_wet_weather(condition):
+            return
+
+        location = weather.get("location", os.getenv("USER_LOCATION", "your area"))
+        high = today.get("high", "?")
+        low = today.get("low", "?")
+        precip_chance = today.get("precip_chance", "unknown")
+
+        subject = f"Weather alert: {condition} today in {location}"
+        body = (
+            f"Heads up — {condition} is in the forecast for today.\n\n"
+            f"Location: {location}\n"
+            f"High: {high}°F   Low: {low}°F\n"
+            f"Precipitation chance: {precip_chance}\n\n"
+            "— Your assistant"
+        )
+        gmail_tools.send_email(user_email, subject, body)
+        logger.info("rain_alert_job: sent weather alert to %s (%s)", user_email, condition)
+
+    except GmailAuthError:
+        logger.error("rain_alert_job: Gmail auth failed — re-run auth_google.py")
+    except Exception as exc:
+        logger.error("rain_alert_job failed: %s", exc)
 
 
 def _is_authorized(update: Update) -> bool:
@@ -199,6 +257,16 @@ def main() -> None:
     )
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
     application.add_error_handler(on_error)
+
+    # Schedule daily rain/snow email alert at 5am in the user's timezone.
+    tz_name = os.getenv("USER_TIMEZONE", "America/Chicago")
+    try:
+        tz = zoneinfo.ZoneInfo(tz_name)
+    except Exception:
+        logger.warning("Invalid USER_TIMEZONE '%s', defaulting to America/Chicago", tz_name)
+        tz = zoneinfo.ZoneInfo("America/Chicago")
+    application.job_queue.run_daily(rain_alert_job, time=dt.time(5, 0, tzinfo=tz))
+    logger.info("Scheduled rain/snow alert at 05:00 %s", tz_name)
 
     logger.info("Bot starting in polling mode (allowed user: %s)", ALLOWED_USER_ID)
     application.run_polling(allowed_updates=Update.ALL_TYPES)

@@ -26,10 +26,11 @@ telegram-assistant/
 │   └── stt.py                 # Speech-to-text using OpenAI gpt-4o-mini-transcribe
 └── tools/
     ├── __init__.py            # Package marker
-    ├── calendar_tools.py      # Google Calendar API — list, create, update, delete events
+    ├── calendar_tools.py      # Google Calendar API — list, create (with Meet link), update, delete events
     ├── tasks_tools.py         # Google Tasks API — list task lists, list, create, complete, delete tasks
     ├── gmail_tools.py         # Gmail API — list unread, search, read threads, create drafts, send email
     ├── drive_tools.py         # Google Drive API — search files, read file content (read-only)
+    ├── maps_tools.py          # Google Maps API — travel time/directions, nearby place search (API key)
     └── weather_tools.py       # Open-Meteo weather — current, 14-day forecast, 7-day past, hourly (no key)
 
 ## Key Design Decisions
@@ -59,6 +60,17 @@ telegram-assistant/
 - Drive file content is always truncated to 3000 chars; Sheets to 50 rows — protects GPT context
 - PDFs are read with pypdf; if pypdf is unavailable, PDF reading degrades to a graceful error
 - Weather uses Open-Meteo (free, no API key); US units (Fahrenheit, mph); failures return error payloads
+- Daily rain/snow email: bot.py registers a job_queue.run_daily job at 5am (USER_TIMEZONE); sends to
+  USER_EMAIL via Gmail if today's weather condition contains rain/snow keywords; GmailAuthError is caught
+  and logged without crashing the bot
+- Google Maps uses the Directions API (travel time) and Places Text Search API (nearby search); both
+  require GOOGLE_MAPS_API_KEY (not OAuth); missing key returns a graceful error payload
+- Google Meet: create_event accepts add_meet_link=True; uses conferenceDataVersion=1 and a uuid requestId;
+  meet_link is returned in the result dict when generated
+- _humanize() in calendar_tools.py now converts all timezone-aware datetimes to USER_TIMEZONE before
+  formatting, so tool results always show times in the user's local time
+- _system_prompt() in llm.py uses zoneinfo.ZoneInfo(USER_TIMEZONE) for current time so the VM (UTC) shows
+  the user's local time, not UTC
 - get_weather returns current + today + next 14 days + past 7 days; get_hourly_forecast gives hour-by-hour
   detail for any single day within 92 days back or 14 days ahead (Open-Meteo past_days/forecast_days)
 - Web search: OpenAI's native web search is a Responses API tool, not a Chat Completions tool. It is
@@ -115,8 +127,10 @@ LLM:
 - GOOGLE_TASKS_LIST_ID      Task list to use by default (default: @default)
 - ALLOWED_USER_ID           Your Telegram numeric user ID
 - USER_NAME                 Your name — injected into the system prompt so GPT addresses you by name
+- USER_EMAIL                Your email — destination for daily rain/snow alerts
 - USER_LOCATION             Home location for weather and context (e.g. "Dubuque, Iowa")
 - USER_TIMEZONE             Your timezone, IANA format (e.g. America/Chicago)
+- GOOGLE_MAPS_API_KEY       API key for Google Maps Directions and Places APIs
 - DATA_DIR                  Path for token.json and assistant.db (default: .)
 
 ## Models

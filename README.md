@@ -8,8 +8,11 @@ with tool calling, and can:
 - **Google Tasks** — list, add, complete, and delete tasks
 - **Gmail** — read unread mail, search, read full threads, draft replies, and send email
 - **Google Drive** — search files and read the contents of Docs, Sheets, and PDFs
+- **Google Maps** — travel time and directions (driving, walking, transit, biking), and nearby place search
 - **Web search** — look up current news, scores, prices, business hours, and other time-sensitive facts
 - **Weather** — current conditions, 14-day forecast, 7-day past history, and hourly detail for any location
+- **Daily rain/snow alert** — automatically emails you at 5am if rain or snow is forecast for your location
+- **Google Meet** — automatically generates a Meet link when you create a meeting
 - **General questions** — answer anything from GPT's knowledge
 
 It remembers conversation context across messages and replies in plain text.
@@ -46,20 +49,26 @@ The bot only responds to your own Telegram user ID.
 - Application type: Desktop app → Create
 - Copy the Client ID and Client Secret
 
-**5. Configure the project**
+**5. Get a Google Maps API key** (for travel time and nearby search)
+- Go to Google Cloud Console → APIs & Services → Library
+- Enable **Directions API** and **Places API**
+- Go to Credentials → Create Credentials → API Key
+- Copy the key (this is separate from the OAuth credentials)
+
+**6. Configure the project**
 ```bash
 cp .env.example .env
-# Edit .env and fill in all values
+# Edit .env and fill in all values including USER_EMAIL and GOOGLE_MAPS_API_KEY
 ```
 
-**6. Install dependencies**
+**7. Install dependencies**
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-**7. Authenticate with Google (one-time)**
+**8. Authenticate with Google (one-time)**
 ```bash
 python auth_google.py
 ```
@@ -67,7 +76,7 @@ A browser window opens. Sign in and approve access to Calendar, Tasks, Gmail,
 and Drive. A `token.json` file is saved locally. Re-run this script if you
 ever change the requested scopes.
 
-**8. Run the bot**
+**9. Run the bot**
 ```bash
 python bot.py
 ```
@@ -173,6 +182,17 @@ gcloud compute ssh telegram-assistant --zone=us-central1-a \
 - "Find my Q3 report"
 - "Read me the contents of the meeting notes doc"
 - "Search Drive for the contractor proposal"
+
+**Google Maps:**
+- "How long does it take to drive to O'Hare?"
+- "How far is downtown Chicago from here?"
+- "Find a coffee shop near me"
+- "Best pizza places nearby"
+- "Walking time from my place to Millennium Park"
+
+**Calendar with Meet:**
+- "Schedule a team call tomorrow at 2pm with a Meet link"
+- "Add a 30-minute call on Friday at 10am and add a Google Meet link"
 
 **Web Search:**
 - "What's the score of the Cubs game?"

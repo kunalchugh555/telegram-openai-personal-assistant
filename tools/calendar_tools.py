@@ -7,6 +7,8 @@ cannot be refreshed, raises CalendarAuthError with an actionable message.
 import datetime as dt
 import logging
 import os
+import uuid
+import zoneinfo
 
 from dotenv import load_dotenv
 from google.auth.transport.requests import Request
@@ -68,7 +70,7 @@ def _calendar_timezone(service) -> str:
 
 
 def _humanize(value: str) -> str:
-    """Turn an ISO date/datetime string into 'Tuesday May 20 at 2:00 PM'."""
+    """Turn an ISO date/datetime string into 'Tuesday May 20 at 2:00 PM' in USER_TIMEZONE."""
     if not value:
         return ""
     try:
@@ -76,6 +78,12 @@ def _humanize(value: str) -> str:
         parsed = dt.datetime.fromisoformat(normalized)
         if "T" not in value:
             return parsed.strftime("%A %B %-d")
+        if parsed.tzinfo is not None:
+            try:
+                tz = zoneinfo.ZoneInfo(os.getenv("USER_TIMEZONE", "America/Chicago"))
+                parsed = parsed.astimezone(tz)
+            except Exception:
+                pass
         return parsed.strftime("%A %B %-d at %-I:%M %p")
     except Exception:
         return value
@@ -129,8 +137,12 @@ def create_event(
     start_datetime: str,
     end_datetime: str,
     description: str = "",
+    add_meet_link: bool = False,
 ) -> dict:
-    """Create a calendar event and return its ID plus a human-readable time."""
+    """Create a calendar event and return its ID plus a human-readable time.
+
+    Pass add_meet_link=True to automatically generate a Google Meet link.
+    """
     service = _service()
     timezone = _calendar_timezone(service)
     body = {
@@ -139,14 +151,33 @@ def create_event(
         "start": {"dateTime": start_datetime, "timeZone": timezone},
         "end": {"dateTime": end_datetime, "timeZone": timezone},
     }
-    created = service.events().insert(calendarId=CALENDAR_ID, body=body).execute()
-    return {
+    if add_meet_link:
+        body["conferenceData"] = {
+            "createRequest": {
+                "requestId": str(uuid.uuid4()),
+                "conferenceSolutionKey": {"type": "hangoutsMeet"},
+            }
+        }
+
+    created = service.events().insert(
+        calendarId=CALENDAR_ID,
+        body=body,
+        conferenceDataVersion=1 if add_meet_link else 0,
+    ).execute()
+
+    result = {
         "event_id": created.get("id"),
         "title": created.get("summary"),
         "start": _humanize(start_datetime),
         "end": _humanize(end_datetime),
         "status": "created",
     }
+    if add_meet_link:
+        for ep in created.get("conferenceData", {}).get("entryPoints", []):
+            if ep.get("entryPointType") == "video":
+                result["meet_link"] = ep.get("uri")
+                break
+    return result
 
 
 def update_event(
