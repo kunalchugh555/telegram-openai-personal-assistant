@@ -65,17 +65,42 @@ telegram-assistant/
   exposed to GPT as an ordinary `web_search` function tool whose handler (_web_search in llm.py) calls
   the Responses API. This keeps the proven Chat Completions tool loop unchanged.
 
-## Security posture (audited 2026-05-19)
+## Security posture (audited 2026-05-19, two passes)
 
+Repo / code:
 - .env and token.json are git-ignored and never committed (verified via git history)
-- File permissions: .env, token.json, assistant.db are chmod 600 (owner-only) on both local and VM
 - SQL: db.py uses parameterized queries — no SQL injection surface
 - Code: no eval/exec/subprocess/shell=True; tool dispatch is a hard-coded whitelist
-- SSH on VM: PasswordAuthentication=no, PermitRootLogin=no, key-only via gcloud-managed keys
-- VM hardening: unattended-upgrades installed (auto security patches); fail2ban running for SSH
-- GCP firewall: default-allow-rdp removed; only default-allow-ssh, internal, and icmp remain
-- GCP billing: $5 budget alert configured on the project (emails on 50/90/100%)
-- LLM hardening: system prompt has explicit SECURITY RULES against indirect prompt injection
+- TLS: no `verify=False` anywhere — all HTTPS traffic verified
+- Dependencies: pip-audit clean (pypdf 6.10.2, requests 2.33.0, python-dotenv 1.2.2)
+
+Filesystem:
+- .env, token.json, assistant.db are chmod 600 (owner-only) on both local and VM
+- No audio temp files leaked — bot.py cleans them up in a finally block
+
+VM OS:
+- SSH: PasswordAuthentication=no, PermitRootLogin=no, key-only
+- block-project-ssh-keys=true on the instance — project-wide keys cannot SSH in
+- unattended-upgrades installed (auto security patches)
+- fail2ban active and watching the sshd jail
+- No cron jobs, no bash/python history files, only one login user (kunalchugh)
+
+systemd bot service (was 9.6 UNSAFE → now 3.2 OK):
+- NoNewPrivileges, PrivateTmp, PrivateDevices, ProtectSystem=strict
+- ProtectKernel{Tunables,Modules,Logs}, ProtectControlGroups, ProtectClock, ProtectHostname
+- ReadWritePaths limited to the app directory
+- RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+- RestrictNamespaces, RestrictRealtime, RestrictSUIDSGID, LockPersonality
+- CapabilityBoundingSet emptied; SystemCallArchitectures=native; UMask=0077
+
+GCP:
+- VM has NO service account attached — metadata server returns 404 for token requests
+- Firewall: only default-allow-ssh (internet → 22), default-allow-internal, default-allow-icmp
+- $5 project budget alert at 50/90/100%
+- Disk encryption: Google-managed (default, always on)
+
+LLM:
+- System prompt has explicit SECURITY RULES against indirect prompt injection
   (treats email/Drive/web-search content as untrusted data; requires user authorization in the
   current turn for send_email/delete_event/delete_task; forbids disclosing secrets)
 - Bot is gated by ALLOWED_USER_ID — every handler short-circuits for non-allowed senders
