@@ -134,6 +134,20 @@ sudo journalctl -u telegram-assistant -f   # live logs
 
 ### Updating the bot after a code change
 
+Deployment is automatic — every push to `main` triggers a GitHub Actions workflow
+(`.github/workflows/deploy.yml`) that SSHs into the VM, runs `git pull`, and
+restarts the bot. Check the Actions tab on GitHub to see deploy status.
+
+**One-time setup required:** add these three secrets in GitHub → Settings → Secrets and variables → Actions:
+
+| Secret | Value |
+|---|---|
+| `VM_HOST` | The VM's external IP (`34.42.158.236`) |
+| `VM_USER` | `kunalchugh` |
+| `DEPLOY_KEY` | The ed25519 private key generated during setup |
+
+To deploy manually (if needed):
+
 ```bash
 gcloud compute ssh telegram-assistant --zone=us-central1-a \
   --project=personal-assistant-kunal -- \
