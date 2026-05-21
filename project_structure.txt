@@ -17,6 +17,9 @@ telegram-assistant/
 ├── bot.py                     # Main entry point — Telegram handlers for voice notes, audio files, and text
 ├── auth_google.py             # One-time OAuth script — generates token.json for all Google scopes
 ├── token.json                 # Google OAuth token — generated locally, never committed
+├── .github/
+│   └── workflows/
+│       └── deploy.yml         # GitHub Actions — auto-deploys to GCP VM on every push to main
 ├── scripts/
 │   └── setup_vm.sh            # Runs on the GCP VM — installs deps, clones repo, registers systemd service
 ├── core/
