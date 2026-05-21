@@ -164,7 +164,7 @@ def _summarize_message(service, message_id: str) -> dict:
 def _build_mime(to: str, subject: str, body: str) -> str:
     """Build a plain-text MIME message and return it base64url-encoded for Gmail."""
     message = EmailMessage()
-    message["To"] = to
+    message["To"] = to.lower()
     message["Subject"] = subject
     message.set_content(body)
     return base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")

@@ -81,7 +81,7 @@ def _is_wet_weather(condition: str) -> bool:
 
 async def rain_alert_job(context: ContextTypes.DEFAULT_TYPE) -> None:
     """Daily 5am job: email USER_EMAIL if notable weather is forecast for today."""
-    user_email = os.getenv("USER_EMAIL")
+    user_email = (os.getenv("USER_EMAIL") or "").lower() or None
     if not user_email:
         logger.warning("rain_alert_job: USER_EMAIL not set, skipping")
         return
